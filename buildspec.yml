@@ -1,0 +1,45 @@
+version: 0.2
+
+env:
+  variables:
+    ECR_NAME: "template"
+    CONTAINER_NAME: "template"
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+  pre_build:
+    commands:
+      - echo Pre Build started on `date`
+      - echo Getting commit hash...
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - LATEST_TAG=$ENVIRONMENT-latest
+      - echo Logging in to Amazon ECR...
+      - $(aws ecr get-login --no-include-email --region $AWS_REGION)
+      - echo Getting .env
+      - mv config/$ENVIRONMENT.env .env
+  build:
+    commands:
+      - echo Pre build completed on `date`
+      - echo Build started on `date`
+      - echo Build App started on `date`
+      - git config --global url."https://$GITHUB_TOKEN:x-oauth-basic@github.com/pcartas".insteadOf "https://github.com/pcartas"
+      - go env -w GOPRIVATE="github.com/pcartas"
+      - export GO111MODULE=on
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -tags netgo -ldflags '-w' -o main *.go
+      - echo Building Docker image...
+      - docker build -t $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$LATEST_TAG .
+      - docker tag $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$LATEST_TAG $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Post build started on `date`
+      - echo Pushing the Docker image...
+      - docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$LATEST_TAG
+      - docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$IMAGE_TAG
+      - echo updated image $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$IMAGE_TAG
+      - echo Writing image definitions file...
+      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_NAME:$IMAGE_TAG > imagedefinitions.json
+artifacts:
+  files: imagedefinitions.json
